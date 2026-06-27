@@ -15,6 +15,13 @@ contract Raffle is VRFConsumerBaseV2 {
 
     error Raffle_NotEnoughEth();
     error Raffle_NotEnoughTime();
+    error Raffle_TransferFailed();
+    error Raffle_NotOpen();
+
+    enum RaffleState {
+        OPEN,
+        CALCULATING
+    }
 
     uint256 private immutable I_ENTRANCE_FEE;
     uint256 private immutable I_INTERVAL;
@@ -22,6 +29,7 @@ contract Raffle is VRFConsumerBaseV2 {
     uint256 private sLastTimeStamp;
 
     event RaffleEnter(address indexed player);
+    event WinnerPicked(address indexed winner);
 
     VRFCoordinatorV2Interface private immutable COORDINATOR;
     bytes32 private immutable KEY_HASH;
@@ -29,6 +37,8 @@ contract Raffle is VRFConsumerBaseV2 {
     uint32 private immutable CALLBACK_GAS_LIMIT;
     uint16 private constant REQUEST_CONFIRMATIONS = 3;
     uint32 private constant NUM_WORDS = 1;
+    address private sRecentWinner;
+    RaffleState private sRaffleState;
 
     constructor(
         uint256 entranceFee,
@@ -45,6 +55,7 @@ contract Raffle is VRFConsumerBaseV2 {
         KEY_HASH = keyHash;
         SUBSCRIPTION_ID = subscriptionId;
         CALLBACK_GAS_LIMIT = callbackGasLimit;
+        sRaffleState = RaffleState.OPEN;
     }
 
    function enterRaffle() external payable {
@@ -59,6 +70,10 @@ contract Raffle is VRFConsumerBaseV2 {
             revert Raffle_NotEnoughEth();
         }
 
+        if (sRaffleState != RaffleState.OPEN) {
+            revert Raffle_NotOpen();
+        }
+
      sPlayers.push(payable(msg.sender));
 
      emit RaffleEnter(msg.sender);
@@ -69,6 +84,7 @@ contract Raffle is VRFConsumerBaseV2 {
         if (block.timestamp - sLastTimeStamp <= I_INTERVAL) {
             revert Raffle_NotEnoughTime();
         }
+        sRaffleState = RaffleState.CALCULATING;
         uint256 requestId = COORDINATOR.requestRandomWords(
         KEY_HASH,
         SUBSCRIPTION_ID,
@@ -78,8 +94,29 @@ contract Raffle is VRFConsumerBaseV2 {
     );
 }
 
+//CEI : Checks, Effects, Interactions
+
    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override {
-        // TODO: pick a winner using randomWords
+        //Checks 
+
+        // conditional checks are already done in pickWinner function
+    
+    //Effect Internal Contract State
+        uint256 indexOfWinner = randomWords[0] % sPlayers.length;
+        address payable recentWinner = sPlayers[indexOfWinner];
+         sRecentWinner = recentWinner;
+         sRaffleState = RaffleState.OPEN;
+         sPlayers = new address payable[](0);
+         sLastTimeStamp = block.timestamp;
+
+         //Interactions (External Contract Interactions)
+        (bool success, ) = recentWinner.call{value: address(this).balance}("");
+        if(!success) {
+            revert Raffle_TransferFailed();
+        }
+
+        emit WinnerPicked(sRecentWinner);
+       
     }
 
    /* Getter Functions */
